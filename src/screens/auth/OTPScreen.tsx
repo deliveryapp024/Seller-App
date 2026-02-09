@@ -8,6 +8,7 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -16,11 +17,16 @@ import { Button } from '../../components';
 import { colors, spacing, typography, borderRadius } from '../../theme';
 import { AuthStackParamList } from '../../navigation/AuthNavigator';
 import { ArrowLeft } from 'lucide-react-native';
+import { verifyOTP, sendOTP } from '../../api/authApi';
 
 type NavigationProp = NativeStackNavigationProp<AuthStackParamList>;
 type RouteProps = RouteProp<AuthStackParamList, 'OTP'>;
 
-export const OTPScreen: React.FC = () => {
+interface OTPScreenProps {
+  onLoginSuccess?: () => void;
+}
+
+export const OTPScreen: React.FC<OTPScreenProps> = ({ onLoginSuccess }) => {
   const { currentColors } = useTheme();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
@@ -56,22 +62,43 @@ export const OTPScreen: React.FC = () => {
     }
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     const otpString = otp.join('');
-    if (otpString.length === 6) {
-      setLoading(true);
-      // Mock verification
-      setTimeout(() => {
-        setLoading(false);
-        // Navigate to main app (in real app, this would set authenticated state)
-      }, 1500);
+    if (otpString.length !== 6) return;
+    
+    setLoading(true);
+    
+    try {
+      const response = await verifyOTP(phone, otpString);
+      
+      if (response.success) {
+        // Token is automatically stored by verifyOTP
+        Alert.alert('Success', 'Login successful!');
+        onLoginSuccess?.();
+      } else {
+        Alert.alert('Verification Failed', response.error || 'Invalid OTP');
+      }
+    } catch (error) {
+      console.error('Verify OTP error:', error);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleResend = () => {
-    if (resendTimer === 0) {
-      setResendTimer(30);
-      // Mock resend
+  const handleResend = async () => {
+    if (resendTimer > 0) return;
+    
+    setResendTimer(30);
+    
+    try {
+      const response = await sendOTP(phone);
+      if (!response.success) {
+        Alert.alert('Error', response.error || 'Failed to resend OTP');
+      }
+    } catch (error) {
+      console.error('Resend OTP error:', error);
+      Alert.alert('Error', 'Failed to resend OTP');
     }
   };
 

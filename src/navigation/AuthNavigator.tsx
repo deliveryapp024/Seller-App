@@ -1,6 +1,6 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { LoginScreen, OTPScreen } from '../screens/auth';
+import { LoginScreen } from '../screens/auth';
 
 export type AuthStackParamList = {
   Login: undefined;
@@ -17,7 +17,7 @@ export const AuthNavigator: React.FC = () => {
       }}
     >
       <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="OTP" component={OTPScreen} />
+      {/* OTP screen is handled by RootNavigator for login success callback */}
     </Stack.Navigator>
   );
 };

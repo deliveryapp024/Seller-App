@@ -7,6 +7,7 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,9 +15,11 @@ import { useTheme } from '../../hooks';
 import { Button, Input } from '../../components';
 import { colors, spacing, typography } from '../../theme';
 import { AuthStackParamList } from '../../navigation/AuthNavigator';
+import { RootStackParamList } from '../../navigation/RootNavigator';
 import { Phone } from 'lucide-react-native';
+import { sendOTP } from '../../api/authApi';
 
-type NavigationProp = NativeStackNavigationProp<AuthStackParamList>;
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const LoginScreen: React.FC = () => {
   const { currentColors, isDark } = useTheme();
@@ -24,14 +27,34 @@ export const LoginScreen: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSendOTP = () => {
-    if (phone.length === 10) {
-      setLoading(true);
-      // Mock API call
-      setTimeout(() => {
-        setLoading(false);
-        navigation.navigate('OTP', { phone: `+91 ${phone}` });
-      }, 1500);
+  const handleSendOTP = async () => {
+    if (phone.length !== 10) return;
+    
+    setLoading(true);
+    const formattedPhone = `+91 ${phone}`;
+    
+    try {
+      const response = await sendOTP(phone);
+      
+      if (response.success) {
+        // Show OTP in dev mode for testing
+        if (__DEV__ && response.data?.otp) {
+          Alert.alert(
+            'Dev Mode - OTP',
+            `OTP for ${formattedPhone}: ${response.data.otp}`,
+            [{ text: 'OK', onPress: () => navigation.navigate('OTP', { phone: formattedPhone }) }]
+          );
+        } else {
+          navigation.navigate('OTP', { phone: formattedPhone });
+        }
+      } else {
+        Alert.alert('Error', response.error || 'Failed to send OTP');
+      }
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
