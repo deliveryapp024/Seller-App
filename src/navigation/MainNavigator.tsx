@@ -9,6 +9,7 @@ import { MoreScreen, SettingsScreen, OutletSettingsScreen, SupportScreen } from 
 import { useTheme } from '../hooks';
 import { colors, typography } from '../theme';
 import { Home, Package, BookOpen, Wallet, MoreHorizontal } from 'lucide-react-native';
+import { FEATURE_FLAGS } from '../constants';
 
 // Tab Navigator
 export type MainTabParamList = {
@@ -88,6 +89,15 @@ const MoreStackNavigator: React.FC = () => (
 export const MainNavigator: React.FC = () => {
   const { currentColors } = useTheme();
 
+  // Build visible tabs based on feature flags
+  const visibleTabs: Array<{ name: keyof MainTabParamList; component: React.FC }> = [
+    { name: 'Home', component: HomeStackNavigator },
+    ...(FEATURE_FLAGS.ENABLE_ORDERS_TAB ? [{ name: 'Orders' as const, component: OrdersStackNavigator }] : []),
+    ...(FEATURE_FLAGS.ENABLE_MENU_TAB ? [{ name: 'Menu' as const, component: MenuStackNavigator }] : []),
+    ...(FEATURE_FLAGS.ENABLE_PAYOUTS_TAB ? [{ name: 'Payouts' as const, component: PayoutsStackNavigator }] : []),
+    { name: 'More', component: MoreStackNavigator },
+  ];
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -125,11 +135,9 @@ export const MainNavigator: React.FC = () => {
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeStackNavigator} />
-      <Tab.Screen name="Orders" component={OrdersStackNavigator} />
-      <Tab.Screen name="Menu" component={MenuStackNavigator} />
-      <Tab.Screen name="Payouts" component={PayoutsStackNavigator} />
-      <Tab.Screen name="More" component={MoreStackNavigator} />
+      {visibleTabs.map((tab) => (
+        <Tab.Screen key={tab.name} name={tab.name} component={tab.component} />
+      ))}
     </Tab.Navigator>
   );
 };

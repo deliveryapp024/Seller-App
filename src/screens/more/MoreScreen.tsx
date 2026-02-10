@@ -13,6 +13,7 @@ import { Card, Toggle } from '../../components';
 import { colors, spacing, typography } from '../../theme';
 import { MoreStackParamList } from '../../navigation/MainNavigator';
 import { mockUser } from '../../data/mockData';
+import { FEATURE_FLAGS } from '../../constants';
 import {
   User,
   FileText,
@@ -143,39 +144,23 @@ export const MoreScreen: React.FC = () => {
             label="Personal Information"
             onPress={() => navigation.navigate('Settings')}
           />
-          <MenuItem
-            icon={FileText}
-            label="Documents & KYC"
-            onPress={() => {}}
-          />
-          <MenuItem
-            icon={CreditCard}
-            label="Bank Details"
-            onPress={() => {}}
-          />
         </Card>
 
-        {/* Outlet Section */}
-        <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
-          OUTLET
-        </Text>
-        <Card style={styles.menuCard}>
-          <MenuItem
-            icon={Store}
-            label="Outlet Settings"
-            onPress={() => navigation.navigate('OutletSettings')}
-          />
-          <MenuItem
-            icon={Users}
-            label="Staff Management"
-            onPress={() => {}}
-          />
-          <MenuItem
-            icon={Clock}
-            label="Timings & Time-Off"
-            onPress={() => {}}
-          />
-        </Card>
+        {/* Outlet Section - Only show if Outlet Settings is enabled */}
+        {FEATURE_FLAGS.ENABLE_OUTLET_SETTINGS && (
+          <>
+            <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
+              OUTLET
+            </Text>
+            <Card style={styles.menuCard}>
+              <MenuItem
+                icon={Store}
+                label="Outlet Settings"
+                onPress={() => navigation.navigate('OutletSettings')}
+              />
+            </Card>
+          </>
+        )}
 
         {/* Preferences Section */}
         <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
