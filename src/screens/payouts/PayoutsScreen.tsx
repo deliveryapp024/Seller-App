@@ -1,15 +1,27 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  RefreshControl,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useTheme } from '../../hooks';
 import { Card, Button } from '../../components';
 import { colors, spacing, typography, borderRadius } from '../../theme';
-import { mockPayouts, mockEarnings } from '../../data/mockData';
+import {
+  getEarningsSummary,
+  getWeeklyEarnings,
+  getAvailableBalance,
+  formatCurrency,
+  formatDateRange,
+  calculateChange,
+  generateChartData,
+} from '../../api/earningsApi';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   Download,
   ChevronRight,
@@ -20,10 +32,82 @@ import {
 
 export const PayoutsScreen: React.FC = () => {
   const { currentColors } = useTheme();
+  
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [earnings, setEarnings] = useState<{
+    today: number;
+    yesterday: number;
+    thisWeek: number;
+    lastWeek: number;
+    thisMonth: number;
+    lastMonth: number;
+    ordersCount?: {
+      today: number;
+      thisWeek: number;
+      thisMonth: number;
+    };
+  } | null>(null);
+  const [balance, setBalance] = useState<{
+    balance: number;
+    pendingAmount: number;
+  } | null>(null);
+  const [weeklyData, setWeeklyData] = useState<any[]>([]);
+  const [weekRange, setWeekRange] = useState<string>('');
 
-  const availableForWithdrawal = mockPayouts
-    .filter(p => p.status === 'completed')
-    .reduce((sum, p) => sum + p.netPayout, 0);
+  const fetchData = async (isRefresh = false) => {
+    if (!isRefresh) setLoading(true);
+    
+    try {
+      // Fetch earnings summary
+      const summaryResponse = await getEarningsSummary();
+      if (summaryResponse.success && summaryResponse.data) {
+        setEarnings(summaryResponse.data.summary);
+      }
+
+      // Fetch available balance
+      const balanceResponse = await getAvailableBalance();
+      if (balanceResponse.success && balanceResponse.data) {
+        setBalance(balanceResponse.data);
+      }
+
+      // Fetch weekly earnings for chart
+      const weeklyResponse = await getWeeklyEarnings();
+      if (weeklyResponse.success && weeklyResponse.data) {
+        const { weekStart, weekEnd, dailyBreakdown } = weeklyResponse.data;
+        setWeekRange(formatDateRange(weekStart, weekEnd));
+        
+        // Generate chart data
+        const chartData = dailyBreakdown.map((day: any) => ({
+          label: day.day,
+          value: day.revenue,
+          orders: day.orders,
+        }));
+        setWeeklyData(chartData);
+      }
+    } catch (error) {
+      console.error('Error fetching earnings data:', error);
+      Alert.alert('Error', 'Failed to load earnings data');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [])
+  );
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData(true);
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -51,14 +135,33 @@ export const PayoutsScreen: React.FC = () => {
     }
   };
 
+  if (loading && !refreshing) {
+    return (
+      <View style={[styles.container, { backgroundColor: currentColors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary.cyan} />
+        <Text style={[styles.loadingText, { color: currentColors.text.secondary }]}>
+          Loading earnings...
+        </Text>
+      </View>
+    );
+  }
+
+  const todayChange = earnings 
+    ? calculateChange(earnings.today, earnings.yesterday)
+    : 0;
+  
+  const weekChange = earnings
+    ? calculateChange(earnings.thisWeek, earnings.lastWeek)
+    : 0;
+
   return (
     <View style={[styles.container, { backgroundColor: currentColors.background }]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={[styles.title, { color: currentColors.text.primary }]}>
-          Payouts
+          Earnings
         </Text>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Statement download will be available soon.')}>
           <Download size={24} color={currentColors.text.primary} />
         </TouchableOpacity>
       </View>
@@ -66,6 +169,13 @@ export const PayoutsScreen: React.FC = () => {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary.cyan}
+          />
+        }
       >
         {/* Available Balance Card */}
         <Card style={styles.balanceCard}>
@@ -73,15 +183,15 @@ export const PayoutsScreen: React.FC = () => {
             Available for Withdrawal
           </Text>
           <Text style={[styles.balanceAmount, { color: currentColors.text.primary }]}>
-            ₹{availableForWithdrawal.toLocaleString()}
+            {formatCurrency(balance?.balance || 0)}
           </Text>
           <Button
             title="Withdraw to Bank"
-            onPress={() => {}}
+            onPress={() => Alert.alert('Coming Soon', 'Withdrawal feature will be available soon.')}
             style={styles.withdrawButton}
           />
           <Text style={[styles.payoutInfo, { color: currentColors.text.muted }]}>
-            Next auto-payout: Tomorrow
+            Pending clearance: {formatCurrency(balance?.pendingAmount || 0)}
           </Text>
         </Card>
 
@@ -95,7 +205,15 @@ export const PayoutsScreen: React.FC = () => {
               Today
             </Text>
             <Text style={[styles.earningValue, { color: currentColors.text.primary }]}>
-              ₹{mockEarnings.today.toLocaleString()}
+              {formatCurrency(earnings?.today || 0)}
+            </Text>
+            {todayChange !== 0 && (
+              <Text style={[styles.changeText, { color: todayChange > 0 ? colors.success : colors.error }]}>
+                {todayChange > 0 ? '+' : ''}{todayChange}% vs yesterday
+              </Text>
+            )}
+            <Text style={[styles.ordersText, { color: currentColors.text.muted }]}>
+              {earnings?.ordersCount?.today || 0} orders
             </Text>
           </Card>
           <Card style={styles.earningCard}>
@@ -103,112 +221,110 @@ export const PayoutsScreen: React.FC = () => {
               This Week
             </Text>
             <Text style={[styles.earningValue, { color: currentColors.text.primary }]}>
-              ₹{mockEarnings.thisWeek.toLocaleString()}
+              {formatCurrency(earnings?.thisWeek || 0)}
+            </Text>
+            {weekChange !== 0 && (
+              <Text style={[styles.changeText, { color: weekChange > 0 ? colors.success : colors.error }]}>
+                {weekChange > 0 ? '+' : ''}{weekChange}% vs last week
+              </Text>
+            )}
+            <Text style={[styles.ordersText, { color: currentColors.text.muted }]}>
+              {earnings?.ordersCount?.thisWeek || 0} orders
             </Text>
           </Card>
         </View>
 
-        {/* Payout History */}
+        {/* Weekly Chart */}
         <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
-          PAYOUT HISTORY
+          WEEKLY TREND {weekRange ? `(${weekRange})` : ''}
         </Text>
-        {mockPayouts.map((payout) => (
-          <Card key={payout.id} style={styles.payoutCard}>
-            <View style={styles.payoutHeader}>
-              <View>
-                <Text style={[styles.payoutCycle, { color: currentColors.text.primary }]}>
-                  Cycle #{payout.cycleNumber}
-                </Text>
-                <Text style={[styles.payoutDate, { color: currentColors.text.muted }]}>
-                  {payout.startDate} - {payout.endDate}
-                </Text>
-              </View>
-              <View style={styles.payoutStatus}>
-                {getStatusIcon(payout.status)}
-                <Text
-                  style={[
-                    styles.statusText,
-                    { color: getStatusColor(payout.status) },
-                  ]}
-                >
-                  {payout.status.charAt(0).toUpperCase() + payout.status.slice(1)}
-                </Text>
-              </View>
+        <Card style={styles.chartCard}>
+          {weeklyData.length > 0 ? (
+            <View style={styles.chartContainer}>
+              {weeklyData.map((day, index) => {
+                const maxValue = Math.max(...weeklyData.map(d => d.value), 1);
+                const height = day.value > 0 ? (day.value / maxValue) * 100 : 4;
+                
+                return (
+                  <View key={index} style={styles.chartBarContainer}>
+                    <View style={styles.chartBarWrapper}>
+                      <View 
+                        style={[
+                          styles.chartBar, 
+                          { 
+                            height: `${Math.max(height, 4)}%`,
+                            backgroundColor: day.value > 0 ? colors.primary.cyan : currentColors.border,
+                          }
+                        ]} 
+                      />
+                    </View>
+                    <Text style={[styles.chartLabel, { color: currentColors.text.muted }]}>
+                      {day.label}
+                    </Text>
+                    <Text style={[styles.chartValue, { color: currentColors.text.secondary }]}>
+                      {day.value > 0 ? `Rs.${(day.value / 1000).toFixed(1)}k` : '-'}
+                    </Text>
+                  </View>
+                );
+              })}
             </View>
+          ) : (
+            <Text style={[styles.noDataText, { color: currentColors.text.muted }]}>
+              No earnings data available for this week
+            </Text>
+          )}
+        </Card>
 
-            <View style={styles.payoutStats}>
-              <View>
-                <Text style={[styles.statLabel, { color: currentColors.text.muted }]}>
-                  Orders
-                </Text>
-                <Text style={[styles.statValue, { color: currentColors.text.primary }]}>
-                  {payout.totalOrders}
-                </Text>
-              </View>
-              <View>
-                <Text style={[styles.statLabel, { color: currentColors.text.muted }]}>
-                  Revenue
-                </Text>
-                <Text style={[styles.statValue, { color: currentColors.text.primary }]}>
-                  ₹{payout.totalRevenue.toLocaleString()}
-                </Text>
-              </View>
-              <View>
-                <Text style={[styles.statLabel, { color: currentColors.text.muted }]}>
-                  Net Payout
-                </Text>
-                <Text style={[styles.statValue, { color: colors.primary.cyan }]}>
-                  ₹{payout.netPayout.toLocaleString()}
-                </Text>
-              </View>
+        {/* This Month Summary */}
+        <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
+          THIS MONTH
+        </Text>
+        <Card style={styles.monthCard}>
+          <View style={styles.monthRow}>
+            <View>
+              <Text style={[styles.monthAmount, { color: currentColors.text.primary }]}>
+                {formatCurrency(earnings?.thisMonth || 0)}
+              </Text>
+              <Text style={[styles.monthOrders, { color: currentColors.text.muted }]}>
+                {earnings?.ordersCount?.thisMonth || 0} orders delivered
+              </Text>
             </View>
-
-            <TouchableOpacity style={styles.downloadRow}>
-              <Download size={16} color={colors.primary.cyan} />
-              <Text style={[styles.downloadText, { color: colors.primary.cyan }]}>
-                Download Invoice
+            <TouchableOpacity style={styles.viewDetailsButton}>
+              <Text style={[styles.viewDetailsText, { color: colors.primary.cyan }]}>
+                View Details
               </Text>
               <ChevronRight size={16} color={colors.primary.cyan} />
             </TouchableOpacity>
-          </Card>
-        ))}
+          </View>
+        </Card>
 
-        {/* Fee Breakdown */}
+        {/* Fee Breakdown Info */}
         <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
-          FEE BREAKDOWN
+          FEE INFORMATION
         </Text>
-        <Card style={styles.feeCard}>
-          <View style={styles.feeRow}>
-            <Text style={[styles.feeLabel, { color: currentColors.text.secondary }]}>
-              Commission (18%)
+        <Card style={styles.infoCard}>
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: currentColors.text.secondary }]}>
+              Commission Rate
             </Text>
-            <Text style={[styles.feeValue, { color: currentColors.text.primary }]}>
-              ₹9,432
-            </Text>
-          </View>
-          <View style={styles.feeRow}>
-            <Text style={[styles.feeLabel, { color: currentColors.text.secondary }]}>
-              Delivery Fee
-            </Text>
-            <Text style={[styles.feeValue, { color: currentColors.text.primary }]}>
-              ₹2,250
+            <Text style={[styles.infoValue, { color: currentColors.text.primary }]}>
+              18%
             </Text>
           </View>
-          <View style={styles.feeRow}>
-            <Text style={[styles.feeLabel, { color: currentColors.text.secondary }]}>
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: currentColors.text.secondary }]}>
               Packaging Fee
             </Text>
-            <Text style={[styles.feeValue, { color: currentColors.text.primary }]}>
-              ₹450
+            <Text style={[styles.infoValue, { color: currentColors.text.primary }]}>
+              Rs.10 per item
             </Text>
           </View>
-          <View style={[styles.feeDivider, { backgroundColor: currentColors.border }]} />
-          <View style={styles.feeRow}>
-            <Text style={[styles.feeTotalLabel, { color: currentColors.text.primary }]}>
-              Net after fees
+          <View style={styles.infoRow}>
+            <Text style={[styles.infoLabel, { color: currentColors.text.secondary }]}>
+              GST on Commission
             </Text>
-            <Text style={[styles.feeTotalValue, { color: colors.success }]}>
-              ₹40,268
+            <Text style={[styles.infoValue, { color: currentColors.text.primary }]}>
+              18%
             </Text>
           </View>
         </Card>
@@ -284,89 +400,102 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes['2xl'],
     fontWeight: typography.fontWeight.bold,
   },
-  payoutCard: {
-    padding: spacing[4],
-    marginBottom: spacing[4],
+  changeText: {
+    fontSize: typography.sizes.xs,
+    marginTop: spacing[1],
+    fontWeight: typography.fontWeight.medium,
   },
-  payoutHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing[4],
-  },
-  payoutCycle: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.fontWeight.semiBold,
-  },
-  payoutDate: {
+  ordersText: {
     fontSize: typography.sizes.xs,
     marginTop: spacing[1],
   },
-  payoutStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  chartCard: {
+    padding: spacing[4],
+    marginBottom: spacing[5],
+    minHeight: 200,
   },
-  statusText: {
-    fontSize: typography.sizes.xs,
-    fontWeight: typography.fontWeight.semiBold,
-    marginLeft: spacing[1],
-  },
-  payoutStats: {
+  chartContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: spacing[4],
+    alignItems: 'flex-end',
+    height: 150,
+    paddingTop: spacing[4],
   },
-  statLabel: {
+  chartBarContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  chartBarWrapper: {
+    width: '60%',
+    height: 120,
+    justifyContent: 'flex-end',
+  },
+  chartBar: {
+    width: '100%',
+    borderRadius: borderRadius.sm,
+    minHeight: 4,
+  },
+  chartLabel: {
     fontSize: typography.sizes.xs,
-    marginBottom: spacing[1],
+    marginTop: spacing[2],
   },
-  statValue: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.fontWeight.semiBold,
+  chartValue: {
+    fontSize: typography.sizes.xs,
+    marginTop: spacing[0.5],
   },
-  downloadRow: {
+  noDataText: {
+    textAlign: 'center',
+    paddingVertical: spacing[8],
+    fontSize: typography.sizes.sm,
+  },
+  monthCard: {
+    padding: spacing[4],
+    marginBottom: spacing[5],
+  },
+  monthRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  monthAmount: {
+    fontSize: typography.sizes['2xl'],
+    fontWeight: typography.fontWeight.bold,
+  },
+  monthOrders: {
+    fontSize: typography.sizes.sm,
+    marginTop: spacing[1],
+  },
+  viewDetailsButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: spacing[3],
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
   },
-  downloadText: {
+  viewDetailsText: {
     fontSize: typography.sizes.sm,
     fontWeight: typography.fontWeight.semiBold,
-    marginLeft: spacing[2],
     marginRight: spacing[1],
   },
-  feeCard: {
+  infoCard: {
     padding: spacing[4],
     marginBottom: spacing[4],
   },
-  feeRow: {
+  infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing[3],
   },
-  feeLabel: {
+  infoLabel: {
     fontSize: typography.sizes.sm,
   },
-  feeValue: {
+  infoValue: {
     fontSize: typography.sizes.md,
     fontWeight: typography.fontWeight.semiBold,
   },
-  feeDivider: {
-    height: 1,
-    marginVertical: spacing[3],
-  },
-  feeTotalLabel: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.fontWeight.bold,
-  },
-  feeTotalValue: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.fontWeight.bold,
-  },
   bottomPadding: {
     height: spacing[10],
+  },
+  loadingText: {
+    marginTop: spacing[4],
+    fontSize: typography.sizes.md,
   },
 });

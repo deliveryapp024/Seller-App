@@ -1,17 +1,29 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useTheme } from '../../hooks';
 import { Card, Button } from '../../components';
 import { colors, spacing, typography, borderRadius } from '../../theme';
-import { mockOrders } from '../../data/mockData';
 import { OrdersStackParamList } from '../../navigation/MainNavigator';
+import {
+  getOrderById,
+  acceptOrder,
+  rejectOrder,
+  markOrderPreparing,
+  formatOrderForDisplay,
+  getStatusColor,
+  getStatusDisplayText,
+  Order,
+} from '../../api/ordersApi';
+import { websocketService, useOrderUpdate } from '../../services/websocket';
 import {
   ArrowLeft,
   Phone,
@@ -29,28 +41,152 @@ export const OrderDetailsScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<RouteProps>();
   
-  const order = mockOrders.find(o => o.id === route.params.orderId);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+
+  const orderId = route.params.orderId;
+
+  // Join order room for real-time updates
+  useEffect(() => {
+    websocketService.joinOrderRoom(orderId);
+    
+    return () => {
+      websocketService.leaveOrderRoom(orderId);
+    };
+  }, [orderId]);
+
+  // Listen for order updates
+  useOrderUpdate((data) => {
+    if (data.orderId === orderId) {
+      // Refresh order data
+      fetchOrder();
+    }
+  });
+
+  useEffect(() => {
+    fetchOrder();
+  }, [orderId]);
+
+  const fetchOrder = async () => {
+    setLoading(true);
+    try {
+      const response = await getOrderById(orderId);
+      if (response.success && response.data) {
+        setOrder(response.data);
+      } else {
+        Alert.alert('Error', 'Failed to load order details');
+        navigation.goBack();
+      }
+    } catch (err) {
+      console.error('Error fetching order:', err);
+      Alert.alert('Error', 'Network error. Please try again.');
+      navigation.goBack();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAccept = async () => {
+    setActionLoading(true);
+    try {
+      const response = await acceptOrder(orderId);
+      if (response.success) {
+        Alert.alert('Success', 'Order accepted!');
+        setOrder((prev) => prev ? { ...prev, status: 'confirmed' } : null);
+      } else {
+        Alert.alert('Error', response.error || 'Failed to accept order');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectReason.trim()) {
+      Alert.alert('Error', 'Please provide a reason for rejection');
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const response = await rejectOrder(orderId, rejectReason);
+      if (response.success) {
+        Alert.alert('Order Rejected', 'The order has been rejected.');
+        navigation.goBack();
+      } else {
+        Alert.alert('Error', response.error || 'Failed to reject order');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMarkPreparing = async () => {
+    setActionLoading(true);
+    try {
+      const response = await markOrderPreparing(orderId, 20);
+      if (response.success) {
+        Alert.alert(
+          'Preparing Started', 
+          'Order marked as preparing. Looking for nearby drivers...'
+        );
+        setOrder((prev) => prev ? { 
+          ...prev, 
+          status: 'preparing',
+          preparingStartedAt: new Date().toISOString(),
+        } : null);
+      } else {
+        Alert.alert('Error', response.error || 'Failed to mark preparing');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCallCustomer = () => {
+    if (order?.customer?.phone) {
+      // In a real app, use Linking to open phone dialer
+      Alert.alert('Call Customer', `Dialing ${order.customer.phone}`);
+    }
+  };
+
+  const handleCallDriver = () => {
+    if (order?.deliveryPartner?.phone) {
+      Alert.alert('Call Driver', `Dialing ${order.deliveryPartner.phone}`);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { backgroundColor: currentColors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary.cyan} />
+        <Text style={[styles.loadingText, { color: currentColors.text.secondary }]}>
+          Loading order details...
+        </Text>
+      </View>
+    );
+  }
 
   if (!order) {
     return (
-      <View style={[styles.container, { backgroundColor: currentColors.background }]}>
+      <View style={[styles.container, { backgroundColor: currentColors.background, justifyContent: 'center', alignItems: 'center' }]}>
         <Text style={{ color: currentColors.text.primary }}>Order not found</Text>
       </View>
     );
   }
 
-  const getStatusColor = () => {
-    switch (order.status) {
-      case 'new': return colors.error;
-      case 'accepted':
-      case 'preparing': return colors.warning;
-      case 'ready': return colors.primary.cyan;
-      case 'picked_up': return colors.info;
-      case 'delivered': return colors.success;
-      case 'cancelled': return colors.error;
-      default: return colors.primary.cyan;
-    }
-  };
+  const displayOrder = formatOrderForDisplay(order);
+  const statusColor = getStatusColor(order.status);
+  const statusText = getStatusDisplayText(order.status);
 
   return (
     <View style={[styles.container, { backgroundColor: currentColors.background }]}>
@@ -61,11 +197,11 @@ export const OrderDetailsScreen: React.FC = () => {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: currentColors.text.primary }]}>
-            Order #{order.orderNumber}
+            Order #{displayOrder.orderNumber}
           </Text>
-          <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor()}20` }]}>
-            <Text style={[styles.statusText, { color: getStatusColor() }]}>
-              {order.status.toUpperCase().replace('_', ' ')}
+          <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
+            <Text style={[styles.statusText, { color: statusColor }]}>
+              {statusText}
             </Text>
           </View>
         </View>
@@ -81,20 +217,23 @@ export const OrderDetailsScreen: React.FC = () => {
           <View style={styles.customerRow}>
             <View>
               <Text style={[styles.customerName, { color: currentColors.text.primary }]}>
-                {order.customerName}
+                {displayOrder.customerName}
               </Text>
               <Text style={[styles.customerPhone, { color: currentColors.text.secondary }]}>
-                {order.customerPhone}
+                {displayOrder.customerPhone}
               </Text>
             </View>
-            <TouchableOpacity style={[styles.iconButton, { backgroundColor: currentColors.surface }]}>
+            <TouchableOpacity 
+              style={[styles.iconButton, { backgroundColor: currentColors.surface }]}
+              onPress={handleCallCustomer}
+            >
               <Phone size={20} color={colors.primary.cyan} />
             </TouchableOpacity>
           </View>
           <View style={[styles.addressRow, { marginTop: spacing[3] }]}>
             <MapPin size={16} color={currentColors.text.muted} />
             <Text style={[styles.addressText, { color: currentColors.text.secondary }]}>
-              {order.deliveryAddress}
+              {displayOrder.deliveryAddress}
             </Text>
           </View>
         </Card>
@@ -102,9 +241,9 @@ export const OrderDetailsScreen: React.FC = () => {
         {/* Order Items */}
         <Card style={styles.section}>
           <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
-            ORDER ITEMS ({order.items.length})
+            ORDER ITEMS ({displayOrder.items.length})
           </Text>
-          {order.items.map((item, idx) => (
+          {displayOrder.items.map((item, idx) => (
             <View key={idx} style={styles.itemRow}>
               <View style={styles.itemInfo}>
                 <Text style={[styles.itemName, { color: currentColors.text.primary }]}>
@@ -121,7 +260,7 @@ export const OrderDetailsScreen: React.FC = () => {
                   x{item.quantity}
                 </Text>
                 <Text style={[styles.price, { color: currentColors.text.primary }]}>
-                  ₹{item.price * item.quantity}
+                  Rs.{item.price * item.quantity}
                 </Text>
               </View>
             </View>
@@ -132,7 +271,7 @@ export const OrderDetailsScreen: React.FC = () => {
               Total
             </Text>
             <Text style={[styles.totalValue, { color: colors.primary.cyan }]}>
-              ₹{order.total}
+              Rs.{displayOrder.total}
             </Text>
           </View>
         </Card>
@@ -145,27 +284,35 @@ export const OrderDetailsScreen: React.FC = () => {
           <View style={styles.infoRow}>
             <Clock size={16} color={currentColors.text.muted} />
             <Text style={[styles.infoText, { color: currentColors.text.secondary }]}>
-              Ordered {order.timestamp}
+              Ordered {displayOrder.timestamp}
             </Text>
           </View>
           <View style={styles.infoRow}>
             <CreditCard size={16} color={currentColors.text.muted} />
             <Text style={[styles.infoText, { color: currentColors.text.secondary }]}>
-              {order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Payment'}
+              {displayOrder.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Payment'}
             </Text>
           </View>
-          {order.specialInstructions && (
+          {displayOrder.estimatedReadyTime && (
+            <View style={styles.infoRow}>
+              <Package size={16} color={currentColors.text.muted} />
+              <Text style={[styles.infoText, { color: colors.success }]}>
+                Ready in {displayOrder.estimatedReadyTime}
+              </Text>
+            </View>
+          )}
+          {displayOrder.specialInstructions && (
             <View style={styles.infoRow}>
               <MessageSquare size={16} color={currentColors.text.muted} />
               <Text style={[styles.infoText, { color: currentColors.text.secondary }]}>
-                {order.specialInstructions}
+                {displayOrder.specialInstructions}
               </Text>
             </View>
           )}
         </Card>
 
         {/* Delivery Partner */}
-        {order.deliveryPartner && (
+        {displayOrder.deliveryPartner && (
           <Card style={styles.section}>
             <Text style={[styles.sectionTitle, { color: currentColors.text.secondary }]}>
               DELIVERY PARTNER
@@ -173,15 +320,18 @@ export const OrderDetailsScreen: React.FC = () => {
             <View style={styles.partnerRow}>
               <View style={styles.partnerInfo}>
                 <Text style={[styles.partnerName, { color: currentColors.text.primary }]}>
-                  {order.deliveryPartner.name}
+                  {displayOrder.deliveryPartner.name}
                 </Text>
                 <View style={styles.ratingRow}>
                   <Text style={[styles.ratingText, { color: colors.success }]}>
-                    ⭐ {order.deliveryPartner.rating}
+                    Rating: {displayOrder.deliveryPartner.rating}
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity style={[styles.callButton, { backgroundColor: colors.primary.cyan }]}>
+              <TouchableOpacity 
+                style={[styles.callButton, { backgroundColor: colors.primary.cyan }]}
+                onPress={handleCallDriver}
+              >
                 <Phone size={20} color={colors.primary.dark} />
               </TouchableOpacity>
             </View>
@@ -192,19 +342,53 @@ export const OrderDetailsScreen: React.FC = () => {
       </ScrollView>
 
       {/* Bottom Actions */}
-      {order.status === 'new' && (
+      {order.status === 'pending_seller_approval' && (
         <View style={[styles.bottomActions, { backgroundColor: currentColors.card }]}>
           <Button
             title="Decline"
             variant="outline"
-            onPress={() => {}}
+            onPress={() => setShowRejectDialog(true)}
             style={{ flex: 1, marginRight: spacing[2] }}
+            disabled={actionLoading}
           />
           <Button
             title="Accept Order"
-            onPress={() => {}}
+            onPress={handleAccept}
             style={{ flex: 2 }}
+            disabled={actionLoading}
+            loading={actionLoading}
           />
+        </View>
+      )}
+
+      {(order.status === 'confirmed' || order.status === 'available') && (
+        <View style={[styles.bottomActions, { backgroundColor: currentColors.card }]}>
+          <Button
+            title="Start Preparing"
+            onPress={handleMarkPreparing}
+            style={{ flex: 1 }}
+            disabled={actionLoading}
+            loading={actionLoading}
+          />
+        </View>
+      )}
+
+      {order.status === 'preparing' && (
+        <View style={[styles.bottomActions, { backgroundColor: currentColors.card }]}>
+          <Button
+            title="Mark Ready for Pickup"
+            variant="outline"
+            onPress={() => Alert.alert('Coming Soon', 'This feature will be available soon.')}
+            style={{ flex: 1 }}
+            disabled={actionLoading}
+          />
+        </View>
+      )}
+
+      {/* Action Loading Overlay */}
+      {actionLoading && (
+        <View style={styles.actionOverlay}>
+          <ActivityIndicator size="large" color={colors.primary.cyan} />
         </View>
       )}
     </View>
@@ -382,5 +566,15 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[6],
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,0,0,0.1)',
+  },
+  loadingText: {
+    marginTop: spacing[4],
+    fontSize: typography.sizes.md,
+  },
+  actionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
